@@ -1,0 +1,4 @@
+*.xlsx binary
+*.xlsm binary
+*.png binary
+*.csv text eol=crlf

@@ -1,0 +1,129 @@
+==============================================================================
+ Horizon_Contrat - code d'événements à coller
+==============================================================================
+Ces procédures ne s'importent pas avec un .bas : elles vivent dans le module
+de code d'un objet précis. Dans l'éditeur VBA (Alt+F11), panneau Projet,
+double-clic sur l'objet indiqué, puis colle le bloc dans la fenêtre qui
+s'ouvre (sous Option Explicit s'il y est déjà, sans le dupliquer).
+
+Aucun de ces événements ne lance d'actualisation, d'export ou d'envoi :
+ouvrir le classeur ne fait que se placer sur le DASHBOARD et afficher l'état
+dans la barre d'état.
+
+
+------------------------------------------------------------------------------
+ 1. ThisWorkbook   (dossier « Microsoft Excel Objets » > ThisWorkbook)
+------------------------------------------------------------------------------
+Option Explicit
+
+Private Sub Workbook_Open()
+    Dim v As Variant, sMsg As String, sChemin As String
+    On Error Resume Next
+    ThisWorkbook.Worksheets(ONGLET_DASHBOARD).Activate
+
+    v = ThisWorkbook.Names("Derniere_Actualisation").RefersToRange.Value
+    If IsDate(v) Then
+        sMsg = "dernière actualisation le " & Format$(v, "dd/mm/yyyy") & " à " & Format$(v, "hh:nn")
+    Else
+        sMsg = "données jamais actualisées depuis ce classeur"
+    End If
+
+    sChemin = CheminRenseigne("Chemin_Donnees")
+    If sChemin = "" Or Not DossierExiste(sChemin) Then
+        sMsg = sMsg & "  -  ATTENTION : Chemin_Donnees introuvable (PARAMETRES)"
+    End If
+
+    Application.StatusBar = "Horizon_Contrat - " & sMsg
+End Sub
+
+Private Sub Workbook_BeforeClose(Cancel As Boolean)
+    Application.StatusBar = False
+    Application.Calculation = xlCalculationAutomatic
+End Sub
+
+
+------------------------------------------------------------------------------
+ 2. Feuille PARAMETRES   (double-clic sur « PARAMETRES » dans le panneau)
+------------------------------------------------------------------------------
+Option Explicit
+
+' Trace qui a changé quel paramètre. EnableEvents = False avant toute
+' écriture : Journaliser écrit dans une feuille, et sans ce verrou un
+' gestionnaire qui écrit se rappelle lui-même jusqu'à saturer la pile.
+' On Error GoTo Fin : si Journaliser échoue, les événements doivent quand
+' même être rétablis, sinon plus rien ne réagit dans le classeur.
+Private Sub Worksheet_Change(ByVal Target As Range)
+    Dim rValeurs As Range, rInter As Range, c As Range, sTrace As String
+
+    Set rValeurs = Me.Range("C6:C" & Me.Cells(Me.Rows.Count, "B").End(xlUp).Row)
+    Set rInter = Intersect(Target, rValeurs)
+    If rInter Is Nothing Then Exit Sub
+
+    For Each c In rInter.Cells
+        If Len(c.Offset(0, -1).Text) > 0 Then
+            sTrace = sTrace & IIf(sTrace = "", "", " ; ") & c.Offset(0, -1).Text & " = " & c.Text
+        End If
+        If Len(sTrace) > 800 Then Exit For
+    Next c
+    If sTrace = "" Then Exit Sub
+
+    Application.EnableEvents = False
+    On Error GoTo Fin
+    Journaliser "Modif paramètre", rInter.Cells.Count, 0, 0, sTrace
+Fin:
+    Application.EnableEvents = True
+End Sub
+
+
+------------------------------------------------------------------------------
+ 3. Feuille DASHBOARD
+------------------------------------------------------------------------------
+Option Explicit
+
+' Double-clic sur une ligne du tableau « Magasins sous surveillance » :
+' ouvre la fiche du magasin. Cancel = True empêche Excel de passer la
+' cellule en mode édition (laid, et refusé sur une feuille protégée).
+Private Sub Worksheet_BeforeDoubleClick(ByVal Target As Range, Cancel As Boolean)
+    Dim rZone As Range, sCode As String
+
+    On Error Resume Next
+    Set rZone = ThisWorkbook.Names("Zone_Tableau_Alerte").RefersToRange
+    On Error GoTo 0
+    If rZone Is Nothing Then Exit Sub
+    If Intersect(Target, rZone) Is Nothing Then Exit Sub
+
+    Cancel = True
+    sCode = Me.Cells(Target.Row, rZone.Column).Text
+    If sCode <> "" Then AfficherFiche sCode
+End Sub
+
+
+------------------------------------------------------------------------------
+ 4. Feuille FICHE_MAGASIN
+------------------------------------------------------------------------------
+Option Explicit
+
+Private m_lLigne As Long
+
+' Surligne la ligne du tableau « Top 6 produits » sélectionnée et nettoie la
+' précédente. Ces lignes n'ont pas de fond propre : les remettre à « aucun
+' remplissage » ne détruit rien. GenererFichesPDF efface aussi le surlignage
+' avant l'export, pour qu'il n'apparaisse pas dans les PDF.
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+    Dim rTable As Range, rLigne As Range
+
+    On Error Resume Next             ' feuille protégée sans droit de format : on renonce
+    Set rTable = ThisWorkbook.Names("Zone_Top_Produits").RefersToRange
+    If rTable Is Nothing Then Exit Sub
+
+    If m_lLigne > 0 Then
+        Intersect(Me.Rows(m_lLigne), rTable).Interior.Pattern = xlNone
+        m_lLigne = 0
+    End If
+
+    Set rLigne = Intersect(Target.Cells(1, 1).EntireRow, rTable)
+    If Not rLigne Is Nothing Then
+        rLigne.Interior.Color = RGB(242, 241, 237)
+        m_lLigne = rLigne.Row
+    End If
+End Sub

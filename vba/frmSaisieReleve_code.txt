@@ -1,0 +1,674 @@
+'==============================================================================
+' frmSaisieReleve - formulaire de saisie d'un relevé journalier
+'
+' À COLLER dans le module de code du UserForm frmSaisieReleve (LISEZ-MOI,
+' étape 6). Un seul contrôle se pose à la main : une zone de texte nommée
+' txtDate. Tous les autres sont créés par UserForm_Initialize.
+'
+' Pourquoi txtDate à part : l'événement Exit (avec Cancel, le seul qui peut
+' refuser de libérer un champ) n'existe que pour un contrôle posé en mode
+' création. Un contrôle créé par code ne reçoit, via WithEvents, que Change,
+' Click, KeyPress... Les autres contrôles n'ont pas besoin d'Exit.
+'==============================================================================
+Option Explicit
+
+Private WithEvents cboMagasin As MSForms.ComboBox
+Private WithEvents optSurPlace As MSForms.OptionButton
+Private WithEvents optEmporter As MSForms.OptionButton
+Private WithEvents optLivraison As MSForms.OptionButton
+Private WithEvents optDrive As MSForms.OptionButton
+Private WithEvents txtCABrut As MSForms.TextBox
+Private WithEvents txtRemises As MSForms.TextBox
+Private WithEvents txtCoutMatiere As MSForms.TextBox
+Private WithEvents txtTickets As MSForms.TextBox
+Private WithEvents txtArticles As MSForms.TextBox
+Private WithEvents cmdValider As MSForms.CommandButton
+Private WithEvents cmdEffacer As MSForms.CommandButton
+Private WithEvents cmdFermer As MSForms.CommandButton
+
+Private fraCanal As MSForms.Frame
+Private fraControles As MSForms.Frame
+Private fraProgression As MSForms.Frame
+Private lblCANet As MSForms.Label
+Private lblInfo As MSForms.Label
+Private lblProgBarre As MSForms.Label
+Private lblProgTexte As MSForms.Label
+Private lstReleves As MSForms.ListBox
+Private m_lblCtrl(1 To 6) As MSForms.Label
+
+' Drapeau anti-récursion : tout code qui écrit dans un contrôle le lève avant,
+' sinon le Change de ce contrôle relance les contrôles, qui réécrivent...
+Private m_bChargement As Boolean
+Private m_bValide As Boolean
+Private m_sBloquants As String
+Private m_sAlertes As String
+Private m_dLargeurProg As Single
+
+Private Const ETAT_ATTENTE As Long = 0
+Private Const ETAT_OK As Long = 1
+Private Const ETAT_KO As Long = 2
+
+'==============================================================================
+' Construction
+'==============================================================================
+Private Sub UserForm_Initialize()
+    Dim v As Variant
+    On Error GoTo Echec
+    m_bChargement = True
+
+    Me.Caption = "Horizon_Contrat - saisie d'un relevé journalier"
+    Me.Width = 522
+    Me.Height = 512
+    ConstruireControles
+
+    v = ListeMagasinsOuverts()
+    If Not IsEmpty(v) Then cboMagasin.List = v
+    If cboMagasin.ListCount > 0 Then cboMagasin.ListIndex = 0
+    txtDate.Text = Format$(DatePreremplie(), "dd/mm/yyyy")
+    optSurPlace.Value = True
+
+    m_bChargement = False
+    ActualiserMagasin
+    ChoisirCanal CanalSuivantLibre(CodeMagasin(), DateOuAujourdhui(), 0)
+    Exit Sub
+Echec:
+    m_bChargement = False
+    MsgBox "Initialisation du formulaire : " & Err.Description, vbExclamation, "Horizon_Contrat"
+End Sub
+
+Private Sub ConstruireControles()
+    Dim i As Long, vEntetes As Variant, vX As Variant
+
+    Etiquette Me, "Magasin (magasins ouverts)", 12, 8, 270
+    Etiquette Me, "Date du relevé (JJ/MM/AAAA)", 300, 8, 200
+
+    Set cboMagasin = Me.Controls.Add("Forms.ComboBox.1", "cboMagasin")
+    With cboMagasin
+        .Left = 12: .Top = 22: .Width = 276: .Height = 20
+        .ColumnCount = 2
+        .ColumnWidths = "48 pt;210 pt"
+        .BoundColumn = 1
+        .Style = fmStyleDropDownList
+        .MatchEntry = fmMatchEntryComplete
+        .TabIndex = 0
+    End With
+
+    ' txtDate : posé à la main, positionné ici
+    With txtDate
+        .Left = 300: .Top = 22: .Width = 110: .Height = 20
+        .TextAlign = fmTextAlignCenter
+        .MaxLength = 10
+        .TabIndex = 1
+    End With
+
+    Set lblInfo = Etiquette(Me, "", 12, 46, 490)
+    lblInfo.Font.Size = 8
+
+    Set fraCanal = Me.Controls.Add("Forms.Frame.1", "fraCanal")
+    With fraCanal
+        .Left = 12: .Top = 62: .Width = 490: .Height = 40
+        .Caption = "Canal"
+        .TabIndex = 2
+    End With
+    Set optSurPlace = OptionCanal("optSurPlace", NomCanal(1), 10)
+    Set optEmporter = OptionCanal("optEmporter", NomCanal(2), 130)
+    Set optLivraison = OptionCanal("optLivraison", NomCanal(3), 250)
+    Set optDrive = OptionCanal("optDrive", NomCanal(4), 370)
+
+    Etiquette Me, "CA brut TTC (€)", 12, 108, 116
+    Etiquette Me, "Remises TTC (€)", 140, 108, 116
+    Etiquette Me, "Coût matière HT (€)", 268, 108, 116
+    Etiquette Me, "CA net HT calculé", 396, 108, 106
+    Set txtCABrut = ZoneNombre("txtCABrut", 12, 122, 3)
+    Set txtRemises = ZoneNombre("txtRemises", 140, 122, 4)
+    Set txtCoutMatiere = ZoneNombre("txtCoutMatiere", 268, 122, 5)
+    Set lblCANet = Etiquette(Me, "-", 396, 122, 106, 20)
+    With lblCANet
+        .Font.Size = 11
+        .Font.Bold = True
+        .ForeColor = RGB(11, 110, 95)
+        .TextAlign = fmTextAlignRight
+    End With
+
+    Etiquette Me, "Nombre de tickets", 12, 148, 116
+    Etiquette Me, "Nombre d'articles", 140, 148, 116
+    Set txtTickets = ZoneNombre("txtTickets", 12, 162, 6)
+    Set txtArticles = ZoneNombre("txtArticles", 140, 162, 7)
+    Etiquette Me, "Montants TTC tels que lus en caisse ; le CA net HT est calculé avec le taux de TVA de PARAMETRES.", _
+              268, 152, 234, 28
+
+    Set fraControles = Me.Controls.Add("Forms.Frame.1", "fraControles")
+    With fraControles
+        .Left = 12: .Top = 190: .Width = 490: .Height = 120
+        .Caption = "Contrôles de cohérence (rouge = bloquant, orange = alerte tracée dans JOURNAL)"
+        .TabStop = False
+    End With
+    For i = 1 To 6
+        Set m_lblCtrl(i) = Etiquette(fraControles, "", 8, 4 + (i - 1) * 16, 470, 15)
+    Next i
+
+    Set fraProgression = Me.Controls.Add("Forms.Frame.1", "fraProgression")
+    With fraProgression
+        .Left = 12: .Top = 316: .Width = 490: .Height = 36
+        .Caption = "Relevés du mois pour ce magasin"
+        .TabStop = False
+    End With
+    With Etiquette(fraProgression, "", 8, 6, 380, 12)        ' fond de la barre
+        .BackStyle = fmBackStyleOpaque
+        .BackColor = RGB(229, 231, 226)
+    End With
+    Set lblProgBarre = Etiquette(fraProgression, "", 8, 6, 1, 12)
+    lblProgBarre.BackStyle = fmBackStyleOpaque
+    lblProgBarre.BackColor = RGB(11, 110, 95)
+    m_dLargeurProg = 380
+    Set lblProgTexte = Etiquette(fraProgression, "", 396, 5, 84, 14)
+    lblProgTexte.TextAlign = fmTextAlignRight
+
+    ' En-têtes du ListBox (ColumnHeads ne marche qu'avec RowSource)
+    vEntetes = Array("Date", "Canal", "CA net HT", "Tickets", "Alertes")
+    vX = Array(14, 78, 150, 234, 284)
+    For i = 0 To 4
+        Etiquette(Me, CStr(vEntetes(i)), CSng(vX(i)), 358, 70).Font.Bold = True
+    Next i
+    Set lstReleves = Me.Controls.Add("Forms.ListBox.1", "lstReleves")
+    With lstReleves
+        .Left = 12: .Top = 372: .Width = 490: .Height = 70
+        .ColumnCount = 5
+        .ColumnWidths = "64 pt;72 pt;84 pt;50 pt;210 pt"
+        .TabStop = False
+    End With
+
+    Set cmdValider = Bouton("cmdValider", "Valider", 262, 8)
+    Set cmdEffacer = Bouton("cmdEffacer", "Effacer", 344, 9)
+    Set cmdFermer = Bouton("cmdFermer", "Fermer", 426, 10)
+    cmdValider.Default = True          ' Entrée
+    cmdFermer.Cancel = True            ' Échap
+End Sub
+
+Private Function Etiquette(ByVal oParent As Object, ByVal sTexte As String, ByVal x As Single, ByVal y As Single, _
+                           ByVal w As Single, Optional ByVal h As Single = 14) As MSForms.Label
+    Dim l As MSForms.Label
+    Set l = oParent.Controls.Add("Forms.Label.1")
+    l.Caption = sTexte
+    l.Left = x: l.Top = y: l.Width = w: l.Height = h
+    l.ForeColor = RGB(70, 80, 76)
+    l.WordWrap = True
+    Set Etiquette = l
+End Function
+
+Private Function OptionCanal(ByVal sNom As String, ByVal sTexte As String, ByVal x As Single) As MSForms.OptionButton
+    Dim o As MSForms.OptionButton
+    Set o = fraCanal.Controls.Add("Forms.OptionButton.1", sNom)
+    o.Caption = sTexte
+    o.Left = x: o.Top = 4: o.Width = 110: o.Height = 18
+    Set OptionCanal = o
+End Function
+
+Private Function ZoneNombre(ByVal sNom As String, ByVal x As Single, ByVal y As Single, _
+                            ByVal iOrdre As Long) As MSForms.TextBox
+    Dim t As MSForms.TextBox
+    Set t = Me.Controls.Add("Forms.TextBox.1", sNom)
+    t.Left = x: t.Top = y: t.Width = 116: t.Height = 20
+    t.TextAlign = fmTextAlignRight
+    t.TabIndex = iOrdre
+    Set ZoneNombre = t
+End Function
+
+Private Function Bouton(ByVal sNom As String, ByVal sTexte As String, ByVal x As Single, _
+                        ByVal iOrdre As Long) As MSForms.CommandButton
+    Dim b As MSForms.CommandButton
+    Set b = Me.Controls.Add("Forms.CommandButton.1", sNom)
+    b.Caption = sTexte
+    b.Left = x: b.Top = 450: b.Width = 76: b.Height = 24
+    b.TabIndex = iOrdre
+    ' Un clic ne prend pas le focus : il ne déclenche donc pas txtDate_Exit,
+    ' et Fermer reste utilisable même avec une date invalide dans le champ.
+    b.TakeFocusOnClick = False
+    Set Bouton = b
+End Function
+
+'==============================================================================
+' Événements
+'==============================================================================
+Private Sub cboMagasin_Change()
+    If m_bChargement Then Exit Sub
+    ActualiserMagasin
+End Sub
+
+' Exit avec Cancel : refuse de quitter le champ tant que la date est invalide.
+' Le contrôle de doublon n'est PAS fait ici : il dépend du canal, choisi après
+' la date dans l'ordre de tabulation ; il est affiché en direct et bloquant
+' à la validation.
+Private Sub txtDate_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    Dim d As Date, sMsg As String
+    If m_bChargement Then Exit Sub
+    If Trim$(txtDate.Text) = "" Then Exit Sub
+
+    If Not LireDateFr(txtDate.Text, d) Then
+        sMsg = "Date invalide. Format attendu : JJ/MM/AAAA."
+    Else
+        sMsg = MessageDateHorsPeriode(d)
+    End If
+    If sMsg <> "" Then
+        MsgBox sMsg, vbExclamation, "Horizon_Contrat"
+        Cancel = True
+        Exit Sub
+    End If
+
+    m_bChargement = True
+    txtDate.Text = Format$(d, "dd/mm/yyyy")           ' 5/9/26 devient 05/09/2026
+    m_bChargement = False
+    RecalculerControles
+End Sub
+
+Private Sub txtDate_Change()
+    If m_bChargement Then Exit Sub
+    RecalculerControles
+End Sub
+
+Private Sub optSurPlace_Click()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub optEmporter_Click()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub optLivraison_Click()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub optDrive_Click()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtCABrut_Change()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtRemises_Change()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtCoutMatiere_Change()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtTickets_Change()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtArticles_Change()
+    If Not m_bChargement Then RecalculerControles
+End Sub
+
+Private Sub txtCABrut_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    FiltrerFrappe KeyAscii, True
+End Sub
+
+Private Sub txtRemises_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    FiltrerFrappe KeyAscii, True
+End Sub
+
+Private Sub txtCoutMatiere_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    FiltrerFrappe KeyAscii, True
+End Sub
+
+Private Sub txtTickets_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    FiltrerFrappe KeyAscii, False
+End Sub
+
+Private Sub txtArticles_KeyPress(ByVal KeyAscii As MSForms.ReturnInteger)
+    FiltrerFrappe KeyAscii, False
+End Sub
+
+Private Sub FiltrerFrappe(ByVal KeyAscii As MSForms.ReturnInteger, ByVal bDecimales As Boolean)
+    Select Case KeyAscii
+        Case 48 To 57                                  ' chiffres
+        Case 44, 46                                    ' virgule, point
+            If Not bDecimales Then KeyAscii = 0
+        Case Else
+            KeyAscii = 0
+    End Select
+End Sub
+
+Private Sub cmdValider_Click()
+    Dim sCode As String, d As Date, sCanal As String, iCanal As Long
+    Dim dBrut As Double, dRemise As Double, dCout As Double, dNet As Double
+    Dim lTickets As Long, lArticles As Long, sAlertes As String
+
+    On Error GoTo Echec
+    RecalculerControles
+    If Not m_bValide Then
+        MsgBox "Relevé refusé :" & IIf(m_sBloquants <> "", m_sBloquants, vbLf & "- montants incomplets") & _
+               vbLf & vbLf & "Corrige les lignes en rouge.", vbExclamation, "Horizon_Contrat"
+        Exit Sub
+    End If
+
+    sCode = CodeMagasin()
+    LireDateFr txtDate.Text, d
+    iCanal = IndexCanal()
+    sCanal = NomCanal(iCanal)
+    dBrut = ValeurNum(txtCABrut.Text)
+    dRemise = ValeurNum(txtRemises.Text)
+    dCout = ValeurNum(txtCoutMatiere.Text)
+    lTickets = CLng(ValeurNum(txtTickets.Text))
+    lArticles = CLng(ValeurNum(txtArticles.Text))
+    dNet = (dBrut - dRemise) / (1 + CDbl(Param("Taux_TVA_Restauration")))
+    sAlertes = Replace$(Mid$(m_sAlertes, 4), vbLf & "- ", " | ")
+
+    EnregistrerReleve sCode, d, sCanal, dBrut, dRemise, dNet, dCout, lTickets, lArticles, sAlertes
+    Journaliser "Saisie relevé", 1, IIf(sAlertes <> "", 1, 0), 0, _
+                sCode & " " & Format$(d, "dd/mm/yyyy") & " " & sCanal & _
+                IIf(sAlertes <> "", " - ALERTE : " & sAlertes, "")
+
+    ChargerDerniersReleves
+    MettreAJourProgression
+    PreparerReleveSuivant sCode, d, iCanal
+    lblInfo.Caption = "Relevé " & sCode & " du " & Format$(d, "dd/mm/yyyy") & " (" & sCanal & ") enregistré" & _
+                      IIf(sAlertes <> "", " - alerte tracée dans JOURNAL.", ".")
+    Exit Sub
+Echec:
+    MsgBox "Enregistrement impossible : " & Err.Description, vbExclamation, "Horizon_Contrat"
+End Sub
+
+Private Sub cmdEffacer_Click()
+    ViderMontants
+    RecalculerControles
+    txtCABrut.SetFocus
+End Sub
+
+Private Sub cmdFermer_Click()
+    If SaisieEnCours() Then
+        If MsgBox("Abandonner la saisie en cours ?", vbYesNo + vbQuestion, "Horizon_Contrat") = vbNo Then Exit Sub
+    End If
+    Unload Me
+End Sub
+
+' La croix de la fenêtre passe par ici (CloseMode = vbFormControlMenu) ;
+' Unload Me du bouton Fermer aussi, mais avec vbFormCode : déjà confirmé.
+Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
+    If CloseMode = vbFormControlMenu Then
+        If SaisieEnCours() Then
+            If MsgBox("Abandonner la saisie en cours ?", vbYesNo + vbQuestion, "Horizon_Contrat") = vbNo Then Cancel = True
+        End If
+    End If
+End Sub
+
+'==============================================================================
+' Contrôles de cohérence : 3 bloquants, 3 alertes. Seuils lus dans PARAMETRES.
+'==============================================================================
+Private Sub RecalculerControles()
+    Dim sCode As String, sCanal As String, d As Date, bDate As Boolean, sMsg As String
+    Dim dBrut As Double, dRemise As Double, dCout As Double, dNet As Double
+    Dim lTickets As Long, lArticles As Long
+    Dim dMin As Double, dMax As Double, dRatio As Double, dTM As Double, dRef As Double, sSource As String
+    Dim dEcart As Double, dTol As Double, dTaux As Double, dSeuil As Double
+
+    On Error GoTo Echec
+    sCode = CodeMagasin()
+    sCanal = NomCanal(IndexCanal())
+    bDate = LireDateFr(txtDate.Text, d)
+    dBrut = ValeurNum(txtCABrut.Text)
+    dRemise = ValeurNum(txtRemises.Text)
+    dCout = ValeurNum(txtCoutMatiere.Text)
+    lTickets = CLng(ValeurNum(txtTickets.Text))
+    lArticles = CLng(ValeurNum(txtArticles.Text))
+    dNet = (dBrut - dRemise) / (1 + CDbl(Param("Taux_TVA_Restauration")))
+    lblCANet.Caption = IIf(dBrut > 0, Format$(dNet, "#,##0.00") & " €", "-")
+
+    m_sBloquants = ""
+    m_sAlertes = ""
+    m_bValide = (sCode <> "" And dBrut > 0 And dCout > 0 And lTickets > 0 And lArticles > 0 And dRemise < dBrut)
+
+    ' 1. Date dans le mois ouvert (bloquant)
+    If Not bDate Then
+        Verdict 1, True, ETAT_ATTENTE, "Date : à saisir au format JJ/MM/AAAA"
+    Else
+        sMsg = MessageDateHorsPeriode(d)
+        If sMsg = "" Then
+            Verdict 1, True, ETAT_OK, "Date du " & Format$(d, "dddd d mmmm yyyy") & ", dans le mois ouvert"
+        Else
+            Verdict 1, True, ETAT_KO, sMsg
+        End If
+    End If
+
+    ' 2. Pas de doublon magasin / date / canal (bloquant)
+    If sCode = "" Or Not bDate Then
+        Verdict 2, True, ETAT_ATTENTE, "Doublon : en attente du magasin et de la date"
+    ElseIf ReleveExiste(sCode, d, sCanal) Then
+        Verdict 2, True, ETAT_KO, "Un relevé existe déjà pour " & sCode & " le " & Format$(d, "dd/mm/yyyy") & " (" & sCanal & ")"
+    Else
+        Verdict 2, True, ETAT_OK, "Aucun relevé existant pour ce magasin, cette date et ce canal"
+    End If
+
+    ' 3. Articles par ticket plausibles (bloquant)
+    dMin = CDbl(Param("Ratio_Articles_Min"))
+    dMax = CDbl(Param("Ratio_Articles_Max"))
+    If lTickets <= 0 Or lArticles <= 0 Then
+        Verdict 3, True, ETAT_ATTENTE, "Articles par ticket : attendus entre " & Format$(dMin, "0.0") & " et " & Format$(dMax, "0.0")
+    Else
+        dRatio = lArticles / lTickets
+        Verdict 3, True, IIf(dRatio >= dMin And dRatio <= dMax, ETAT_OK, ETAT_KO), _
+                "Articles par ticket : " & Format$(dRatio, "0.00") & " (plage admise " & Format$(dMin, "0.0") & " - " & Format$(dMax, "0.0") & ")"
+    End If
+
+    ' 4. Ticket moyen proche de la référence (alerte)
+    dTol = CDbl(Param("Seuil_Ecart_Ticket_Moyen"))
+    If sCode = "" Or dNet <= 0 Or lTickets <= 0 Then
+        Verdict 4, False, ETAT_ATTENTE, "Ticket moyen : écart toléré " & Format$(dTol, "0%") & " à la moyenne"
+    Else
+        dTM = dNet / lTickets
+        dRef = TicketMoyenReference(sCode, IIf(bDate, d, Date), sSource)
+        If dRef <= 0 Then
+            Verdict 4, False, ETAT_ATTENTE, "Ticket moyen " & Format$(dTM, "0.00") & " € : pas de référence pour ce magasin"
+        Else
+            dEcart = dTM / dRef - 1
+            Verdict 4, False, IIf(Abs(dEcart) <= dTol, ETAT_OK, ETAT_KO), _
+                    "Ticket moyen " & Format$(dTM, "0.00") & " € : " & Format$(dEcart, "+0.0%;-0.0%") & _
+                    " vs " & sSource & " (" & Format$(dRef, "0.00") & " €, tolérance " & Format$(dTol, "0%") & ")"
+        End If
+    End If
+
+    ' 5. Remises sous le plafond (alerte)
+    dSeuil = CDbl(Param("Plafond_Remise"))
+    If dBrut <= 0 Then
+        Verdict 5, False, ETAT_ATTENTE, "Remises : plafond " & Format$(dSeuil, "0%") & " du CA brut"
+    Else
+        dTaux = dRemise / dBrut
+        Verdict 5, False, IIf(dTaux <= dSeuil, ETAT_OK, ETAT_KO), _
+                "Remises : " & Format$(dTaux, "0.0%") & " du CA brut (plafond " & Format$(dSeuil, "0%") & ")"
+    End If
+
+    ' 6. Coût matière sous le seuil du magasin (alerte)
+    If sCode = "" Or dNet <= 0 Or dCout <= 0 Then
+        Verdict 6, False, ETAT_ATTENTE, "Coût matière : comparé au taux de coût de l'exercice du magasin"
+    Else
+        dTaux = dCout / dNet
+        dSeuil = TauxCoutMagasin(sCode) + CDbl(Param("Tolerance_Cout_Matiere_Pt"))
+        Verdict 6, False, IIf(dTaux <= dSeuil, ETAT_OK, ETAT_KO), _
+                "Coût matière : " & Format$(dTaux, "0.0%") & " du CA net HT (seuil du magasin " & Format$(dSeuil, "0.0%") & ")"
+    End If
+    Exit Sub
+
+Echec:
+    m_bValide = False
+    lblInfo.Caption = "Contrôles impossibles : " & Err.Description
+End Sub
+
+Private Sub Verdict(ByVal i As Long, ByVal bBloquant As Boolean, ByVal iEtat As Long, ByVal sTexte As String)
+    Select Case iEtat
+        Case ETAT_OK
+            m_lblCtrl(i).Caption = "OK          " & sTexte
+            m_lblCtrl(i).ForeColor = RGB(11, 110, 95)
+        Case ETAT_KO
+            If bBloquant Then
+                m_lblCtrl(i).Caption = "BLOQUANT    " & sTexte
+                m_lblCtrl(i).ForeColor = RGB(180, 40, 40)
+                m_sBloquants = m_sBloquants & vbLf & "- " & sTexte
+                m_bValide = False
+            Else
+                m_lblCtrl(i).Caption = "ALERTE      " & sTexte
+                m_lblCtrl(i).ForeColor = RGB(190, 110, 0)
+                m_sAlertes = m_sAlertes & vbLf & "- " & sTexte
+            End If
+        Case Else
+            m_lblCtrl(i).Caption = "...         " & sTexte
+            m_lblCtrl(i).ForeColor = RGB(140, 148, 144)
+            If bBloquant Then m_bValide = False
+    End Select
+End Sub
+
+Private Function MessageDateHorsPeriode(ByVal d As Date) As String
+    Dim dMO As Date
+    dMO = DebutDeMois(CDate(Param("Mois_Ouvert")))
+    If d < dMO Or d > FinDeMois(dMO) Then
+        MessageDateHorsPeriode = "La date doit être dans le mois ouvert à la saisie (" & Format$(dMO, "mmmm yyyy") & _
+                                 "). Pour changer de mois : paramètre Mois_Ouvert dans PARAMETRES."
+    ElseIf d > Date Then
+        MessageDateHorsPeriode = "Date dans le futur : un relevé se saisit une fois la journée terminée."
+    End If
+End Function
+
+'==============================================================================
+' Magasin, canal, liste, progression
+'==============================================================================
+Private Sub ActualiserMagasin()
+    Dim sCode As String, bDrive As Boolean
+    On Error GoTo Echec
+    sCode = CodeMagasin()
+    If sCode = "" Then Exit Sub
+
+    bDrive = MagasinADrive(sCode)
+    m_bChargement = True
+    optDrive.Enabled = bDrive
+    If Not bDrive And optDrive.Value = True Then optSurPlace.Value = True
+    m_bChargement = False
+
+    lblInfo.Caption = cboMagasin.List(cboMagasin.ListIndex, 1) & "  ·  drive : " & IIf(bDrive, "oui", "non") & _
+                      "  ·  taux de coût matière de l'exercice : " & Format$(TauxCoutMagasin(sCode), "0.0%")
+    ChargerDerniersReleves
+    MettreAJourProgression
+    RecalculerControles
+    Exit Sub
+Echec:
+    m_bChargement = False
+    lblInfo.Caption = "Lecture du magasin impossible : " & Err.Description
+End Sub
+
+Private Function CodeMagasin() As String
+    If cboMagasin.ListIndex >= 0 Then CodeMagasin = CStr(cboMagasin.List(cboMagasin.ListIndex, 0))
+End Function
+
+Private Function IndexCanal() As Long
+    If optEmporter.Value = True Then
+        IndexCanal = 2
+    ElseIf optLivraison.Value = True Then
+        IndexCanal = 3
+    ElseIf optDrive.Value = True Then
+        IndexCanal = 4
+    Else
+        IndexCanal = 1
+    End If
+End Function
+
+Private Sub ChoisirCanal(ByVal i As Long)
+    m_bChargement = True
+    Select Case i
+        Case 1: optSurPlace.Value = True
+        Case 2: optEmporter.Value = True
+        Case 3: optLivraison.Value = True
+        Case 4: If optDrive.Enabled Then optDrive.Value = True
+    End Select
+    m_bChargement = False
+    RecalculerControles
+End Sub
+
+Private Function DatePreremplie() As Date
+    Dim dMO As Date, d As Date
+    dMO = DebutDeMois(CDate(ParamOuDefaut("Mois_Ouvert", Date)))
+    d = Date - 1
+    If d < dMO Or d > FinDeMois(dMO) Then d = dMO
+    DatePreremplie = d
+End Function
+
+Private Function DateOuAujourdhui() As Date
+    Dim d As Date
+    If LireDateFr(txtDate.Text, d) Then
+        DateOuAujourdhui = d
+    Else
+        DateOuAujourdhui = Date
+    End If
+End Function
+
+' Après une validation : montants vidés, canal suivant non encore saisi pour
+' cette date ; si les canaux du jour sont tous saisis, jour suivant.
+' Cinq relevés d'affilée se saisissent ainsi au clavier seul.
+Private Sub PreparerReleveSuivant(ByVal sCode As String, ByVal d As Date, ByVal iCanal As Long)
+    Dim iSuivant As Long, d2 As Date
+    ViderMontants
+    iSuivant = CanalSuivantLibre(sCode, d, iCanal)
+    If iSuivant = 0 Then
+        d2 = d + 1
+        If MessageDateHorsPeriode(d2) = "" Then
+            m_bChargement = True
+            txtDate.Text = Format$(d2, "dd/mm/yyyy")
+            m_bChargement = False
+            iSuivant = CanalSuivantLibre(sCode, d2, 0)
+        End If
+    End If
+    If iSuivant > 0 Then ChoisirCanal iSuivant Else RecalculerControles
+    txtCABrut.SetFocus
+End Sub
+
+Private Sub ViderMontants()
+    m_bChargement = True
+    txtCABrut.Text = ""
+    txtRemises.Text = ""
+    txtCoutMatiere.Text = ""
+    txtTickets.Text = ""
+    txtArticles.Text = ""
+    m_bChargement = False
+End Sub
+
+Private Function SaisieEnCours() As Boolean
+    SaisieEnCours = (Len(txtCABrut.Text & txtRemises.Text & txtCoutMatiere.Text & txtTickets.Text & txtArticles.Text) > 0)
+End Function
+
+Private Sub ChargerDerniersReleves()
+    Dim v As Variant
+    On Error GoTo Echec
+    lstReleves.Clear
+    v = DerniersReleves(CodeMagasin(), 5)
+    If IsEmpty(v) Then
+        lstReleves.AddItem "(aucun relevé saisi pour ce magasin)"
+    Else
+        lstReleves.List = v
+    End If
+    Exit Sub
+Echec:
+    lstReleves.Clear
+    lstReleves.AddItem "(lecture impossible : " & Err.Description & ")"
+End Sub
+
+' Barre de progression maison : un Label coloré dont on pilote la largeur.
+' Pas de contrôle ActiveX ProgressBar : absent de nombreux postes, il casse
+' le formulaire à l'ouverture chez les autres.
+Private Sub MettreAJourProgression()
+    Dim sCode As String, dMO As Date, n As Long, nTotal As Long, dPart As Double
+    On Error GoTo Echec
+    sCode = CodeMagasin()
+    If sCode = "" Then Exit Sub
+    dMO = DebutDeMois(CDate(Param("Mois_Ouvert")))
+    n = NbRelevesMois(sCode, dMO)
+    nTotal = Day(FinDeMois(dMO)) * NbCanauxMagasin(sCode)
+    If nTotal > 0 Then dPart = n / nTotal
+    If dPart > 1 Then dPart = 1
+    lblProgBarre.Width = IIf(dPart * m_dLargeurProg < 1, 1, dPart * m_dLargeurProg)
+    lblProgBarre.Visible = (n > 0)
+    lblProgTexte.Caption = n & " / " & nTotal
+    fraProgression.Caption = "Relevés de " & Format$(dMO, "mmmm yyyy") & " pour ce magasin (jours x canaux)"
+    Exit Sub
+Echec:
+    lblProgTexte.Caption = "?"
+End Sub

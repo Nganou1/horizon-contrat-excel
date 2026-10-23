@@ -1,0 +1,186 @@
+﻿HORIZON_CONTRAT - MESURES DAX DU MODÈLE (31)
+============================================================
+Créées par ConstruireModele dans la table Fait_Ventes. Syntaxe à virgules ;
+dans une interface Excel en français, Power Pivot peut afficher des points-virgules.
+
+
+--- Base ----------------------------------------------
+
+CA Brut HT = SUM ( Fait_Ventes[CA_Brut_HT] )
+
+Remises HT = SUM ( Fait_Ventes[Remises_HT] )
+
+CA Net HT = [CA Brut HT] - [Remises HT]
+
+Coût Matière HT = SUM ( Fait_Ventes[Cout_Matiere_HT] )
+
+Marge Brute HT = [CA Net HT] - [Coût Matière HT]
+
+Taux de Marge = DIVIDE ( [Marge Brute HT], [CA Net HT] )
+
+
+--- Volumes -------------------------------------------
+
+Tickets = SUM ( Fait_Ventes[Nb_Tickets] )
+
+Articles = SUM ( Fait_Ventes[Nb_Articles] )
+
+Ticket Moyen = DIVIDE ( [CA Net HT], [Tickets] )
+
+Articles par Ticket = DIVIDE ( [Articles], [Tickets] )
+
+Nb Magasins Actifs = DISTINCTCOUNT ( Fait_Ventes[Code_Magasin] )
+
+
+--- Temps ---------------------------------------------
+
+CA Net N-1 = CALCULATE ( [CA Net HT], SAMEPERIODLASTYEAR ( Dim_Dates[Date] ) )
+
+Δ CA Net % = DIVIDE ( [CA Net HT] - [CA Net N-1], [CA Net N-1] )
+
+CA Net Cumul Exercice =
+VAR Ex = MAX ( Dim_Dates[Annee_Exercice] )
+VAR MoisEx = MAX ( Dim_Dates[Mois_Exercice] )
+RETURN
+    CALCULATE (
+        [CA Net HT],
+        ALL ( Dim_Dates ),
+        Dim_Dates[Annee_Exercice] = Ex,
+        Dim_Dates[Mois_Exercice] <= MoisEx
+    )
+
+CA Net 12 Mois Glissants = CALCULATE ( [CA Net HT], DATESINPERIOD ( Dim_Dates[Date], MAX ( Dim_Dates[Date] ), -12, MONTH ) )
+
+Taux de Marge N-1 = CALCULATE ( [Taux de Marge], SAMEPERIODLASTYEAR ( Dim_Dates[Date] ) )
+
+Δ Taux de Marge pt = IF ( ISBLANK ( [Taux de Marge N-1] ) || ISBLANK ( [Taux de Marge] ), BLANK (), ( [Taux de Marge] - [Taux de Marge N-1] ) * 100 )
+
+CA Net Mois Précédent = CALCULATE ( [CA Net HT], DATEADD ( Dim_Dates[Date], -1, MONTH ) )
+
+Δ CA Net Mois % = DIVIDE ( [CA Net HT] - [CA Net Mois Précédent], [CA Net Mois Précédent] )
+
+
+--- Périmètre -----------------------------------------
+
+CA Net Périmètre Comparable =
+VAR Debut = MIN ( Dim_Dates[Date] )
+VAR Fin = MAX ( Dim_Dates[Date] )
+VAR DebutN1 = EDATE ( Debut, -12 )
+VAR Comparables =
+    FILTER (
+        ALL ( Dim_Magasins ),
+        Dim_Magasins[Date_Ouverture] <= DebutN1
+            && ( ISBLANK ( Dim_Magasins[Date_Fermeture] )
+                 || Dim_Magasins[Date_Fermeture] >= Fin )
+    )
+RETURN
+    CALCULATE ( [CA Net HT], KEEPFILTERS ( Comparables ) )
+
+Nb Magasins Comparables =
+VAR Debut = MIN ( Dim_Dates[Date] )
+VAR Fin = MAX ( Dim_Dates[Date] )
+VAR DebutN1 = EDATE ( Debut, -12 )
+RETURN
+    COUNTROWS (
+    FILTER (
+        ALL ( Dim_Magasins ),
+        Dim_Magasins[Date_Ouverture] <= DebutN1
+            && ( ISBLANK ( Dim_Magasins[Date_Fermeture] )
+                 || Dim_Magasins[Date_Fermeture] >= Fin )
+    )
+    )
+
+Δ CA Comparable % =
+VAR Debut = MIN ( Dim_Dates[Date] )
+VAR Fin = MAX ( Dim_Dates[Date] )
+VAR DebutN1 = EDATE ( Debut, -12 )
+VAR Comparables =
+    FILTER (
+        ALL ( Dim_Magasins ),
+        Dim_Magasins[Date_Ouverture] <= DebutN1
+            && ( ISBLANK ( Dim_Magasins[Date_Fermeture] )
+                 || Dim_Magasins[Date_Fermeture] >= Fin )
+    )
+VAR Courant = CALCULATE ( [CA Net HT], KEEPFILTERS ( Comparables ) )
+VAR Precedent =
+    CALCULATE ( [CA Net HT], KEEPFILTERS ( Comparables ), SAMEPERIODLASTYEAR ( Dim_Dates[Date] ) )
+RETURN
+    DIVIDE ( Courant - Precedent, Precedent )
+
+
+--- Budget --------------------------------------------
+
+Budget CA HT =
+CALCULATE (
+    SUM ( Fait_Budget[Budget_CA_HT] ),
+    ALL ( Dim_Dates ),
+    TREATAS ( VALUES ( Dim_Dates[Mois_Debut] ), Fait_Budget[Mois] )
+)
+
+Écart au Budget € =
+VAR MoisBudgetes =
+    FILTER (
+        VALUES ( Dim_Dates[Mois_Debut] ),
+        NOT ISBLANK ( CALCULATE ( [Budget CA HT], ALL ( Dim_Magasins ) ) )
+    )
+RETURN
+    IF (
+        ISBLANK ( [Budget CA HT] ),
+        BLANK (),
+        CALCULATE ( [CA Net HT], MoisBudgetes ) - [Budget CA HT]
+    )
+
+Atteinte Budget % =
+VAR MoisBudgetes =
+    FILTER (
+        VALUES ( Dim_Dates[Mois_Debut] ),
+        NOT ISBLANK ( CALCULATE ( [Budget CA HT], ALL ( Dim_Magasins ) ) )
+    )
+RETURN
+    DIVIDE ( CALCULATE ( [CA Net HT], MoisBudgetes ), [Budget CA HT] )
+
+Nb Magasins Sous Objectif =
+COUNTROWS (
+    FILTER (
+        VALUES ( Dim_Magasins[Code_Magasin] ),
+        NOT ISBLANK ( [Budget CA HT] ) && [Atteinte Budget %] < 9 / 10
+    )
+)
+
+
+--- Opérations ----------------------------------------
+
+Taux de Perte Stock = DIVIDE ( SUM ( Fait_Stocks[Pertes] ), SUM ( Fait_Stocks[Sorties] ) )
+
+Retard Livraison Moyen = AVERAGE ( Fait_Achats[Retard_Jours] )
+
+Taux de Livraisons en Retard =
+DIVIDE (
+    CALCULATE ( COUNTROWS ( Fait_Achats ), Fait_Achats[Retard_Jours] > 0 ),
+    CALCULATE ( COUNTROWS ( Fait_Achats ), FILTER ( Fait_Achats, NOT ISBLANK ( Fait_Achats[Retard_Jours] ) ) )
+)
+
+Jours Absence Moyens = AVERAGE ( Fait_RH[Jours_Absence] )
+
+CA Net par Heure Travaillée = DIVIDE ( [CA Net HT], SUM ( Fait_RH[Heures_Travaillees] ) )
+
+
+--- Relations (17) ----------------------------------------
+
+Fait_Ventes[Date]  ->  Dim_Dates[Date]
+Fait_Budget[Mois]  ->  Dim_Dates[Date]
+Fait_Mix_Produits[Mois]  ->  Dim_Dates[Date]
+Fait_Stocks[Mois]  ->  Dim_Dates[Date]
+Fait_Achats[Date_Commande]  ->  Dim_Dates[Date]
+Fait_RH[Mois]  ->  Dim_Dates[Date]
+Fait_Ventes[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_Budget[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_Mix_Produits[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_Stocks[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_Achats[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_RH[Code_Magasin]  ->  Dim_Magasins[Code_Magasin]
+Fait_Mix_Produits[Code_Produit]  ->  Dim_Produits[Code_Produit]
+Fait_Stocks[Code_Produit]  ->  Dim_Produits[Code_Produit]
+Fait_Achats[Code_Produit]  ->  Dim_Produits[Code_Produit]
+Fait_Achats[Code_Fournisseur]  ->  Dim_Fournisseurs[Code_Fournisseur]
+Fait_RH[Matricule]  ->  Dim_Employes[Matricule]

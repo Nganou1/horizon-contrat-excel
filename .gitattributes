@@ -2,3 +2,6 @@
 *.xlsm binary
 *.png binary
 *.csv text eol=crlf
+*.bas -text
+vba/*.txt -text
+vba/PowerQuery_M/*.m -text

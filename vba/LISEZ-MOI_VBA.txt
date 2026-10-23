@@ -1,0 +1,250 @@
+﻿==============================================================================
+ HORIZON_CONTRAT - COUCHE VBA ET POWER PIVOT
+ Guide d'installation et de test
+==============================================================================
+
+Ce dossier ajoute à Horizon_Contrat_Pilotage ce que le classeur de formules
+ne contient pas : le modèle Power Query / Power Pivot, et l'automatisation
+VBA (PDF par magasin, mails Outlook, formulaire de saisie, journal).
+
+Rien ne s'exécute tout seul. Chaque macro se lance à la main (Alt+F8 ou un
+bouton) ; l'ouverture du classeur ne fait que se placer sur le DASHBOARD.
+
+
+------------------------------------------------------------------------------
+ EN CAS D'ERREUR
+------------------------------------------------------------------------------
+Si une macro s'arrête, note le message et clique sur « Débogage » : la ligne
+surlignée en jaune indique l'instruction en cause.
+
+
+------------------------------------------------------------------------------
+ CONTENU DU DOSSIER
+------------------------------------------------------------------------------
+  modConstruireModele.bas   Power Query + Power Pivot construits par macro
+  modParametres.bas         Param("Cle"), noms d'onglets, chemins
+  modUtilitaires.bas        dossiers, noms de fichiers, dates, nombres
+  modJournal.bas            Journaliser -> tblJournal
+  modActualisation.bas      ActualiserTout (synchrone)
+  modReporting.bas          GenererFichesPDF, AfficherFiche
+  modEnvoi.bas              EnvoyerFichesFranchises (brouillons par défaut)
+  modSaisie.bas             données du formulaire de saisie
+  modInstallation.bas       InstallerReporting (onglets, paramètres, boutons)
+  modDeploiement.bas        protection, feuilles très masquées
+  frmSaisieReleve_code.txt  code du formulaire (à coller, étape 6)
+  Evenements_a_coller.txt   événements classeur et feuilles (étape 7)
+  PowerQuery_M\             les 19 requêtes en clair (.m), pour lecture
+  Mesures_DAX.txt           les 31 mesures et les 17 relations, pour lecture
+
+
+------------------------------------------------------------------------------
+ PRÉREQUIS
+------------------------------------------------------------------------------
+  - Excel 365 ou Excel 2021 pour Windows (Power Query et modèle de données).
+  - Pour ouvrir Power Pivot (étape 5) : Fichier > Options > Compléments >
+    Gérer : Compléments COM > Atteindre > cocher « Microsoft Power Pivot
+    for Excel ». La macro elle-même n'en a pas besoin.
+  - Outlook installé et configuré, pour l'étape des mails seulement.
+  - Macros : Fichier > Options > Centre de gestion de la confidentialité >
+    Paramètres > Paramètres des macros > « Désactiver avec notification »,
+    puis « Activer le contenu » sur le bandeau jaune à l'ouverture.
+
+
+------------------------------------------------------------------------------
+ INSTALLATION (20 minutes)
+------------------------------------------------------------------------------
+1. Le dossier vba\ peut rester à côté du classeur :
+     ...\Horizon_Contrat\vba\
+   (l'emplacement n'a pas d'importance pour les .bas).
+
+2. Ouvre Horizon_Contrat_Pilotage.xlsx, puis Fichier > Enregistrer sous >
+   type « Classeur Excel (prenant en charge les macros) (*.xlsm) », DANS LE
+   MÊME DOSSIER (celui qui contient Donnees). Travaille désormais dans le
+   .xlsm.
+
+3. Alt+F11 (éditeur VBA). Fichier > Importer un fichier... et importe les
+   dix fichiers .bas, un par un. Ils apparaissent sous « Modules ».
+   Puis Débogage > Compiler VBAProject : aucun message ne doit s'afficher.
+
+4. Retour dans Excel, Alt+F8 > InstallerReporting > Exécuter.
+   Résultat attendu :
+     - onglets JOURNAL et SAISIE_RELEVES créés ;
+     - 7 clés ajoutées en bas de PARAMETRES (dont Mode d'envoi, domaine
+       mail, mois ouvert à la saisie) ;
+     - Chemin_Donnees = ...\Horizon_Contrat\Donnees\  et
+       Chemin_Sorties = ...\Horizon_Contrat\Sorties\ ;
+     - 4 noms ajoutés ; 4 boutons en haut à droite du DASHBOARD.
+
+5. Alt+F8 > ConstruireModele > Exécuter. Compte 2 à 5 minutes (la barre
+   d'état indique l'étape). Message final attendu :
+     Tables chargées 11 / 11 - Relations 17 / 17 - Mesures DAX 31 / 31 -
+     Lignes de Fait_Ventes : 288 844.
+   La macro crée l'onglet TCD_CONTROLE : compare le TCD (ligne 4) au
+   tableau « Valeurs attendues » (ligne 10) :
+
+     Exercice   CA Net HT        Marge    Tickets      Ticket moy.  Δ CA     Δ comp.  Atteinte  Magasins
+     2024/25    141 471 441 €    69,86 %  11 179 848   12,65 €      (vide)   (vide)   92,7 %    118
+     2025/26    159 556 531 €    69,55 %  11 899 174   13,41 €      +12,8 %  +10,2 %  98,1 %    120
+
+   Puis les deux réglages que le modèle objet d'Excel n'expose pas :
+     Données > Gérer le modèle de données (Power Pivot), table Dim_Dates :
+       a. onglet Création > Marquer comme table de dates > colonne Date ;
+       b. sélectionne la colonne Mois_Nom > Accueil > Trier par colonne >
+          Mois_Num.
+   ConstruireModele est relançable : il supprime et reconstruit tout le
+   modèle à l'identique.
+
+6. Le formulaire de saisie :
+   a. Alt+F11 > Insertion > UserForm.
+   b. F4 (fenêtre Propriétés) : (Name) = frmSaisieReleve.
+   c. Boîte à outils (Affichage > Boîte à outils) : pose UNE zone de texte
+      (TextBox) n'importe où sur le formulaire ; F4 : (Name) = txtDate.
+      Ne pose rien d'autre : tous les autres contrôles sont créés par le
+      code au chargement, et leur position aussi (y compris celle de txtDate).
+   d. Clic droit sur frmSaisieReleve > Code. Efface ce qui s'y trouve,
+      colle tout le contenu de frmSaisieReleve_code.txt.
+   e. Débogage > Compiler VBAProject : aucun message.
+   Pourquoi txtDate est la seule exception : l'événement Exit (avec Cancel,
+   qui refuse de laisser sortir d'un champ invalide) n'existe que pour un
+   contrôle posé en mode création. Les contrôles créés par code reçoivent
+   leurs événements par WithEvents, qui ne fournit pas Exit.
+
+7. Les événements : ouvre Evenements_a_coller.txt et colle chacun des quatre
+   blocs dans le module indiqué (ThisWorkbook, feuille PARAMETRES, feuille
+   DASHBOARD, feuille FICHE_MAGASIN). Débogage > Compiler. Enregistre.
+
+8. Ferme et rouvre le .xlsm : le classeur s'ouvre sur le DASHBOARD et la
+   barre d'état indique la date de dernière actualisation.
+
+
+------------------------------------------------------------------------------
+ TESTS DE RECETTE
+------------------------------------------------------------------------------
+A. Fiches PDF - bouton « Générer les fiches PDF »
+   Attendu : 119 PDF dans Sorties\AAAA-MM-JJ\ ; message « 1 magasin fermé
+   exclu (HC-063), 0 sans CA » ; une ligne dans JOURNAL.
+   Pourquoi 119 et pas 120 : HC-063, fermé le 30/04/2026, a encore
+   749 863 € de CA sur l'exercice (septembre-avril). C'est sa date de
+   fermeture qui l'écarte, via le paramètre Inclure_Magasins_Fermes = FAUX.
+   Mets-le à VRAI pour obtenir 120 fiches : les deux se défendent, le
+   journal dit lequel a été appliqué.
+   Test d'interruption : relance, appuie sur Échap au milieu. Message
+   « interrompu par l'utilisateur », et Excel revient normal (affichage,
+   événements, mode de calcul).
+
+B. Mails - bouton « Préparer les mails » (le même jour que A)
+   Mode_Envoi_Reel = FAUX (valeur livrée) : 119 messages dans le dossier
+   Brouillons d'Outlook, adressés à hc-xxx@horizon-contrat.example, copie
+   direction@horizon-contrat.example, PDF joint. RIEN n'est envoyé.
+   Les adresses .example sont fictives par construction (domaine réservé,
+   aucun message ne peut y arriver) : même en mode réel, le code les laisse
+   en brouillon.
+
+C. Saisie - bouton « Saisir un relevé »
+   Magasin proposé : HC-002 (Lille - Périphérie, avec drive). Date proposée :
+   la veille (dans le mois ouvert, paramètre Mois_Ouvert).
+   1. Relevé normal, au clavier seul (Tab pour avancer, Entrée pour valider) :
+        CA brut TTC 1220 - Remises 36 - Coût matière 323 - Tickets 82 -
+        Articles 209
+      CA net HT affiché : 1 076,36 €. Six contrôles verts (articles par
+      ticket 2,55 ; ticket moyen 13,13 € soit -2,4 % vs 13,44 € de
+      l'exercice ; remises 3,0 % ; coût matière 30,0 % pour un seuil de
+      35,1 %). Entrée enregistre, le canal passe tout seul au suivant non
+      saisi (À emporter), le curseur revient sur CA brut.
+   2. Doublon : remets la même date et « Sur place » : la ligne 2 passe en
+      BLOQUANT, Entrée affiche « Relevé refusé » avec la raison.
+   3. Coût matière à 45 % : même saisie qu'en 1 sur un autre canal, coût
+      matière 485 : ALERTE orange, le relevé est accepté et la ligne de
+      JOURNAL porte « ALERTE : Coût matière : 45,1 % ... ».
+   4. Échap ferme ; avec des montants saisis, il demande confirmation.
+   Le ListBox affiche les cinq derniers relevés du magasin, la barre de
+   progression le nombre de relevés du mois (jours x canaux).
+
+D. Double-clic sur une ligne du tableau « Magasins sous surveillance » du
+   DASHBOARD : la fiche du magasin s'ouvre, région comprise.
+
+E. Change un seuil dans PARAMETRES (colonne C) : une ligne « Modif paramètre »
+   apparaît dans JOURNAL avec la clé et la nouvelle valeur.
+
+F. Bouton « Actualiser les données » : actualise les requêtes, le modèle et
+   les TCD, puis écrit Derniere_Actualisation.
+
+
+------------------------------------------------------------------------------
+ PASSER EN ENVOI RÉEL (quand tout est testé, pas avant)
+------------------------------------------------------------------------------
+  1. PARAMETRES : remplace Domaine_Mail_Franchises et Mail_Copie_Direction
+     par de vraies valeurs.
+  2. Mode_Envoi_Reel = VRAI.
+  3. « Préparer les mails » demande une confirmation explicite (bouton Non
+     par défaut) avant le premier envoi.
+  Une boucle .Send lancée par erreur pendant un test ne se rattrape pas :
+  c'est pour ça que tout est en brouillon par défaut.
+
+
+------------------------------------------------------------------------------
+ AVANT DE DONNER LE CLASSEUR (cahier, J9 point 4)
+------------------------------------------------------------------------------
+  ProtegerRestitution         DASHBOARD et FICHE_MAGASIN protégés, filtres
+                              et sélection du magasin laissés modifiables.
+  DeprotegerRestitution       l'inverse.
+  MasquerFeuillesTechniques   REF_*, DATA_*, CALC_* en « très masqué ».
+  AfficherFeuillesTechniques  l'inverse.
+  Mot de passe des feuilles : HC-2026 (constante dans modParametres). C'est
+  un garde-fou contre les fausses manipulations, pas une sécurité.
+  Verrouillage du projet VBA : Outils > Propriétés de VBAProject >
+  Protection. Note le mot de passe ailleurs : perdu, il est perdu.
+
+
+------------------------------------------------------------------------------
+ CE QUI DIFFÈRE DU CORRIGÉ, ET POURQUOI
+------------------------------------------------------------------------------
+  - Param lit la cellule nommée du même nom que la clé : le classeur livré
+    n'a pas de tableau tblParametres, mais chaque clé y est un nom.
+  - Les onglets sont désignés par des constantes (modParametres), pas par
+    leur CodeName. Pour passer aux CodeName comme le demande le cahier :
+    sélectionne la feuille dans l'éditeur VBA, F4, (Name) = shFiche (par
+    exemple), puis remplace Feuille(ONGLET_FICHE) par shFiche.
+  - Les colonnes de tblMagasins sont lues par leur en-tête
+    (ListColumns("Date_Fermeture").Index), pas par un numéro : dans le
+    classeur, la colonne 11 est Date_Ouverture et la 12 Date_Fermeture.
+  - 119 PDF : par la date de fermeture, pas par un CA nul (voir test A).
+  - Double-clic du DASHBOARD : renseigne aussi la région de la fiche, sinon
+    la fiche refuse un magasin hors de la région affichée et reste vide.
+  - EnableCancelKey = xlErrorHandler : Échap passe par la restauration. Avec
+    la valeur par défaut, « Fin » dans la boîte d'interruption arrête la
+    macro sans rien restaurer.
+  - Atteinte Budget % et Écart au Budget € ne comparent que les mois
+    budgétés. Le budget commence en janvier 2025 : sur l'exercice 2024/25,
+    la version simple divise douze mois de CA par huit mois de budget et
+    affiche 138,2 % ; la version livrée affiche 92,7 %. Sur janvier-août
+    2026, les deux donnent 97,2 %.
+  - Dans le DAX, le seuil 0,9 est écrit 9 / 10 : aucun séparateur décimal,
+    donc aucune ambiguïté entre Excel français et anglais.
+
+
+------------------------------------------------------------------------------
+ DÉPANNAGE
+------------------------------------------------------------------------------
+  « Type défini par l'utilisateur non défini » sur MSForms
+      Le code du formulaire a été collé ailleurs que dans un UserForm.
+  « Variable non définie » sur txtDate
+      La zone de texte posée à l'étape 6c ne s'appelle pas txtDate.
+  « Paramètre introuvable : ... »
+      InstallerReporting n'a pas été lancé, ou une clé a été renommée.
+  ConstruireModele : « Table ... » dans la liste des éléments non créés
+      Une requête a échoué. Données > Requêtes et connexions, survole la
+      requête : l'erreur M s'affiche. Vérifie d'abord Chemin_Donnees.
+  ConstruireModele : erreur Formula.Firewall
+      Données > Obtenir des données > Options de requête > Classeur actif >
+      Confidentialité > « Ignorer les niveaux de confidentialité ».
+  ConstruireModele : des mesures non créées
+      Note la première erreur affichée et le nom de la mesure.
+  Export PDF : erreur sur une propriété de mise en page
+      Aucune imprimante installée. La macro continue sans la mise en page ;
+      installe « Microsoft Print to PDF » comme imprimante par défaut.
+  Outlook : « Un programme tente d'envoyer un message... »
+      Protection d'Outlook sans antivirus reconnu. Réponds « Autoriser »,
+      ou reste en mode brouillons.
+  Le bouton ne fait rien / « Impossible d'exécuter la macro »
+      Le classeur n'est pas en .xlsm, ou les macros ne sont pas activées.

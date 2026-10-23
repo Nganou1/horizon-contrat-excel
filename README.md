@@ -60,6 +60,19 @@ Les fichiers sources contiennent des défauts réalistes, tous traités et trac�
 1. Télécharger le dépôt (bouton **Code › Download ZIP**) et le décompresser.
 2. Ouvrir `Horizon_Contrat_Pilotage.xlsx` dans Excel 2016 ou plus récent. Le classeur se recalcule à l'ouverture.
 3. Changer la région et le canal en haut du `DASHBOARD`, ou le magasin dans `FICHE_MAGASIN`.
+4. Pour la couche Power Pivot et VBA : enregistrer le classeur en `.xlsm`, importer les modules du dossier [`vba/`](vba/) puis lancer `InstallerReporting` et `ConstruireModele`. Le pas-à-pas complet, avec les valeurs de contrôle attendues, est dans [`vba/LISEZ-MOI_VBA.txt`](vba/LISEZ-MOI_VBA.txt).
+
+## Couche Power Pivot et VBA
+
+| Module | Rôle |
+|---|---|
+| `modConstruireModele` | Construit le modèle depuis Excel : 19 requêtes Power Query, 11 tables, 17 relations, 31 mesures DAX, et un TCD de contrôle |
+| `modReporting` | Génère une fiche PDF par magasin à partir de `FICHE_MAGASIN` |
+| `modEnvoi` | Prépare un mail Outlook par franchisé avec sa fiche (brouillons par défaut) |
+| `modSaisie` + formulaire | Formulaire de saisie des relevés avec six contrôles de cohérence |
+| `modJournal`, `modActualisation`, `modDeploiement` | Journal des traitements, actualisation, protection des feuilles techniques |
+
+Le code M des requêtes et les mesures DAX sont aussi lisibles en clair dans [`vba/PowerQuery_M/`](vba/PowerQuery_M/) et [`vba/Mesures_DAX.txt`](vba/Mesures_DAX.txt).
 
 ## Structure du dépôt
 
@@ -67,6 +80,7 @@ Les fichiers sources contiennent des défauts réalistes, tous traités et trac�
 Horizon_Contrat_Pilotage.xlsx   classeur de pilotage
 Donnees/                        fichiers sources (24 fichiers de ventes, référentiels, stocks, achats, RH, budgets)
 docs/                           captures du classeur
+vba/                            modules VBA, code du formulaire, requêtes M, mesures DAX, guide d'installation
 ```
 
 ## Outils
